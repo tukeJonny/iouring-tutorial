@@ -1,0 +1,35 @@
+--- part3.c	2021-03-01 00:56:29.614979708 +0900
++++ part4.c	2021-03-01 00:57:32.207280865 +0900
+@@ -11,6 +11,7 @@
+ #define QD 128 // length of rings
+ #define BS 4096 // block size
+ #define NSECS_PER_SEC 1000000000UL // 1sec = 10^9nsec
++#define SQ_THREAD_IDLE_MSEC 2000 // 2sec = 2000msec
+ 
+ #define RANDOM_FILE_PATH "/dev/urandom"
+ 
+@@ -76,13 +77,23 @@
+ 
+ static int setup_context(unsigned entries, struct io_uring *ring) {
+ 	int ret;
++	struct io_uring_params params;
+ 
+-	ret = io_uring_queue_init(entries, ring, 0);
++	memset(&params, 0, sizeof(params));
++	params.flags |= IORING_SETUP_SQPOLL;
++	params.sq_thread_idle = SQ_THREAD_IDLE_MSEC;
++
++	ret = io_uring_queue_init_params(entries, ring, &params);
+ 	if (ret < 0) {
+ 		fprintf(stderr, "[!] queue_init: %s\n", strerror(-ret));
+ 		return -1;
+ 	}
+ 
++	if (!(params.features & IORING_FEAT_SQPOLL_NONFIXED)) {
++		fprintf(stderr, "[!] This kernel doesn't support SQPOLL_NONFIXED. Please update your linux kernel to 5.11+...\n");
++		return -1;
++	}
++
+ 	return 0;
+ }
+ 

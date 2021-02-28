@@ -1,0 +1,161 @@
+#!/usr/bin/env bpftrace
+/**
+ * uring_kfuncs - Trace io_uring related kernel functions.
+ *
+ * Usage: sudo ./tools/uring_kfuncs.bt
+ */
+
+#include <uapi/linux/io_uring.h>
+
+struct io_rings {
+    unsigned int sq_dropped;
+    unsigned int cq_overflow;
+}
+
+struct io_ring_ctx {
+    unsigned int flags;
+    struct io_uring_sqe *sq_sqes;
+    struct io_rings *rings;
+}
+
+BEGIN {
+    printf("Tracing io_uring kernel functions... Hit Ctrl-C to end.\n");
+
+    // rw
+    // See https://github.com/torvalds/linux/blob/master/include/linux/kernel.h#L41,L43
+    @rw[0] = "READ";
+    @rw[1] = "WRITE";
+
+    // io_uring_submit_sqe() opcodes
+    // See https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h#L102,L143
+    @sqe_opcodes[0] = "NOP";
+    @sqe_opcodes[1] = "READV";
+    @sqe_opcodes[2] = "WRITEV";
+    @sqe_opcodes[3] = "FSYNC";
+    @sqe_opcodes[4] = "READ_FIXED";
+    @sqe_opcodes[5] = "POLL_ADD";
+    @sqe_opcodes[6] = "POLL_REMOVE";
+    @sqe_opcodes[7] = "SYNC_FILE_RANGE";
+    @sqe_opcodes[8] = "SENDMSG";
+    @sqe_opcodes[9] = "RECVMSG";
+    @sqe_opcodes[10] = "TIMEOUT";
+    @sqe_opcodes[11] = "TIMEOUT_REMOVE";
+    @sqe_opcodes[12] = "ACCEPT";
+    @sqe_opcodes[13] = "ASYNC_CANCEL";
+    @sqe_opcodes[14] = "LINK_TIMEOUT";
+    @sqe_opcodes[15] = "CONNECT";
+    @sqe_opcodes[16] = "FALLOCATE";
+    @sqe_opcodes[17] = "OPENAT";
+    @sqe_opcodes[18] = "CLOSE";
+    @sqe_opcodes[19] = "FILES_UPDATE";
+    @sqe_opcodes[20] = "STATX";
+    @sqe_opcodes[21] = "READ";
+    @sqe_opcodes[22] = "WRITE";
+    @sqe_opcodes[23] = "FADVISE";
+    @sqe_opcodes[24] = "MADVISE";
+    @sqe_opcodes[25] = "SEND";
+    @sqe_opcodes[26] = "RECV";
+    @sqe_opcodes[27] = "OPENAT2";
+    @sqe_opcodes[28] = "EPOLL_CTL";
+    @sqe_opcodes[29] = "SPLICE";
+    @sqe_opcodes[30] = "PROVIDE_BUFFERS";
+    @sqe_opcodes[31] = "REMOVE_BUFFERS";
+    @sqe_opcodes[32] = "TEE";
+    @sqe_opcodes[33] = "SHUTDOWN";
+    @sqe_opcodes[34] = "RENAMEAT";
+    @sqe_opcodes[35] = "UNLINKAT";
+}
+
+tracepoint:io_uring:io_uring_create {
+    printf("io_uring_setup(sqes = %d, cqes = %d) called.\n", args->sq_entries, args->cq_entries);
+
+    // See https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h#L91,L100
+    if (args->flags & (1 << 0)) {
+        printf("\t- setup I/O polling.\n");
+    }
+    if (args->flags & (1 << 1)) {
+        printf("\t- setup SQ polling.\n");
+    }
+    if (args->flags & (1 << 2)) {
+        printf("\t- setup SQ affinity.\n");
+    }
+    if (args->flags & (1 << 3)) {
+        printf("\t- setup custom CQ size.\n");
+    }
+    if (args->flags & (1 << 4)) {
+        printf("\t- setup clamping SQ/CQ ring sizes.\n");
+    }
+    if (args->flags & (1 << 5)) {
+        printf("\t- setup attaching existing workqueue.\n");
+    }
+    if (args->flags & (1 << 5)) {
+        printf("\t- setup without ring.\n");
+    }
+}
+
+tracepoint:io_uring:io_uring_cqring_wait {
+    if (args->min_events > 0) {
+        printf("blocking wait(wait_cqes?) for cqring with min_events = %d.\n", args->min_events);
+    } else {
+        printf("non-blocking wait(peek) for cqring.\n");
+    }
+    @cqring_waits[args->min_events] = count();
+}
+
+tracepoint:io_uring:io_uring_submit_sqe {
+    @submissions[@sqe_opcodes[args->opcode], args->force_nonblock, args->sq_thread] = count();
+}
+
+tracepoint:io_uring:io_uring_complete {
+    $ctx = (struct io_ring_ctx *)args->ctx;
+
+    $sqe = $ctx->sq_sqes;
+    $opcode = @sqe_opcodes[$sqe->opcode];
+    $len = $sqe->len;
+
+    $rings = $ctx->rings;
+    $sq_dropped = $rings->sq_dropped;
+    $cq_overflow = $rings->cq_overflow;
+
+    printf("%d finished: res=%ld, sq_dropped=%d, cq_overflow=%d, len=%d\n", $sqe->opcode, args->res, $sq_dropped, $cq_overflow, $len);
+
+    // See https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h#L75,L89
+    $flags = $ctx->flags;
+    if ($flags & (1 << 0)) {
+        printf("\t- IOSQE_FIXED_FILE\n");
+    }
+    if ($flags & (1 << 1)) {
+        printf("\t- IOSQE_IO_DRAIN\n");
+    }
+    if ($flags & (1 << 2)) {
+        printf("\t- IOSQE_IO_LINK\n");
+    }
+    if ($flags & (1 << 4)) {
+        printf("\t- IOSQE_IO_HARDLINK\n");
+    }
+    if ($flags & (1 << 5)) {
+        printf("\t- IOSQE_ASYNC\n");
+    }
+    if ($flags & (1 << 6)) {
+        printf("\t- IOSQE_BUFFER_SELECT\n");
+    }
+}
+
+tracepoint:io_uring:io_uring_queue_async_work {
+    $rw = @rw[args->rw];
+
+    printf("due to -EAGAIN, fallback to async I/O(rw = %s, flags = %d)\n", $rw, args->flags);
+    @fallback_asyncs[@rw[args->rw]] = count();
+}
+
+/*
+tracepoint:io_uring:io_uring_defer {
+    printf("io_uring_defer()\n");
+    @counter[probe] = count();
+}
+*/
+
+END {
+    clear(@rw);
+    clear(@sqe_opcodes)
+}

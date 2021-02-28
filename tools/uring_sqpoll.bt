@@ -1,0 +1,49 @@
+#!/usr/bin/env bpftrace
+/*
+ * uring_sqpoll - Trace io_uring SQ Poller related executions.
+ *
+ * Usage: sudo ./tools/uring_sqpoll.bt
+ */
+
+BEGIN {
+    printf("Tracing SQ poller... Hit Ctrl-C to end.\n");
+}
+
+kprobe:io_wq_create {
+    time("%H:%M:%S ");
+    printf("Create io-wq %s by %s\n", comm, kstack);
+}
+
+kprobe:io_wq_enqueue /comm == "io_uring-sq"/ {
+    @enqueue_count = count();
+}
+
+kprobe:io_wqe_wake_worker /comm == "io_uring-sq"/ {
+    time("%H:%M:%S ");
+    printf("wake up sleeping worker triggered by %s\n", kstack);
+}
+
+kprobe:io_wq_submit_work  {
+    @submit_work_th[comm] = count();
+}
+
+kprobe:io_wq_get_task {
+    time("%H:%M:%S ");
+    printf("wq get task: %s\n", comm);
+}
+
+kretprobe:io_wq_get {
+    $res = retval;
+    if ($res) {
+        time("%H:%M:%S ");
+        printf("refcnt has incremented.");
+    } else {
+        time("%H:%M:%S ");
+        printf("io_wq_get: receives invalid data or can't inc refcnt.\n");
+    }
+}
+
+kprobe:io_wq_destroy {
+    time("%H:%M:%S ");
+    printf("destroy io-wq: %s\n", comm);
+}

@@ -1,0 +1,196 @@
+--- part1.c	2021-03-01 00:53:33.822134090 +0900
++++ part2.c	2021-03-01 00:59:42.415907524 +0900
+@@ -18,6 +18,7 @@
+ int infd;
+ 
+ struct io_data {
++	char *filename;
+ 	int outfd;
+ 	int len;
+ 	struct iovec iovecs[];
+@@ -55,19 +56,29 @@
+ 	return 0;
+ }
+ 
+-static int submit_read_random_request(struct io_uring *ring, off_t size) {
++static int submit_read_random_requests(struct io_uring *ring, off_t size, int count) {
+ 	struct io_uring_sqe *sqe;
+ 	struct io_data *data;
++	char *filename;
++	int i;
+ 
+ 	int blocks = (int)size / BS;
+ 	if (size % BS) {
+ 		blocks++;
+ 	}
+ 
++	for (i = 0; i < count; i++) {
++		filename = (char *)malloc(sizeof(char) * (FILENAME_MAX+1));
++		if (filename == NULL) {
++			perror("malloc");
++			goto err;
++		}
++		make_filename(filename, FILENAME_MAX+1, i);
++
+ 	data = (struct io_data *)malloc(sizeof(*data) + sizeof(struct iovec) * blocks);
+-	if (data == NULL) {
++		if (!data) {
+ 		perror("malloc");
+-		return 1;
++			goto err;
+ 	}
+ 
+ 	off_t bytes_remaining = size;
+@@ -90,6 +101,7 @@
+ 		current_block++;
+ 		bytes_remaining -= bytes_to_read;
+ 	}
++		data->filename = filename;
+ 	data->len = current_block;
+ 
+ 	sqe = io_uring_get_sqe(ring);
+@@ -100,11 +112,16 @@
+ 
+ 	io_uring_prep_readv(sqe, infd, data->iovecs, blocks, 0);
+ 	io_uring_sqe_set_data(sqe, data);
++	}
++
+ 	io_uring_submit(ring);
+ 
+ 	return 0;
+ 
+ err:
++	if (filename != NULL) {
++		free(filename);
++	}
+ 	if (data != NULL) {
+ 		free(data);
+ 	}
+@@ -112,12 +129,13 @@
+ 	return 1;
+ }
+ 
+-int get_read_completion(struct io_uring *ring, const char *path) {
++int get_read_completions(struct io_uring *ring, int count) {
+ 	struct io_uring_cqe *cqe;
+ 	struct io_uring_sqe *sqe;
+ 	struct io_data *data;
+-	int fd, ret;
++	int i, fd, ret;
+ 
++	for (i = 0; i < count; i++) {
+ 	ret = io_uring_wait_cqe(ring, &cqe);
+ 	if (ret < 0) {
+ 		perror("io_uring_wait_cqe");
+@@ -129,7 +147,7 @@
+ 	}
+ 	data = io_uring_cqe_get_data(cqe);
+ 
+-	fd = open(path, O_WRONLY|O_CREAT|O_TRUNC, 0644);
++		fd = open(data->filename, O_WRONLY|O_CREAT|O_TRUNC, 0644);
+ 	if (fd < 0) {
+ 		perror("open");
+ 		return 1;
+@@ -144,9 +162,12 @@
+ 
+ 	io_uring_prep_writev(sqe, data->outfd, data->iovecs, data->len, 0);
+ 	io_uring_sqe_set_data(sqe, data);
+-	io_uring_submit(ring);
+ 
+ 	io_uring_cqe_seen(ring, cqe);
++	}
++
++	io_uring_submit(ring);
++
+ 
+ 	return 0;
+ 
+@@ -156,11 +177,12 @@
+ 	return 1;
+ }
+ 
+-int finalize_completions(struct io_uring *ring) {
++int finalize_completions(struct io_uring *ring, int count) {
+ 	struct io_uring_cqe *cqe;
+ 	struct io_data *data;
+-	int ret;
++	int i, ret;
+ 
++	for (i = 0; i < count; i++) {
+ 	ret = io_uring_wait_cqe(ring, &cqe);
+ 	if (ret < 0) {
+ 		perror("io_uring_wait_cqe");
+@@ -173,20 +195,21 @@
+ 
+ 	data = io_uring_cqe_get_data(cqe);
+ 	close(data->outfd);
++		free(data->filename);
+ 	free(data);
+ 
+ 	io_uring_cqe_seen(ring, cqe);
++	}
+ 
+ 	return 0;
+ }
+ 
+ int main(int argc, char *argv[]) {
+ 	struct io_uring ring;
+-	int i, opt;
++	int opt;
+ 	int size_bytes = 100,
+ 		count = 10;
+ 	char *outdir = "/tmp/";
+-	char **filenames;
+ 	struct timespec before, after;
+ 
+ 	while ((opt = getopt(argc, argv, "o:s:c:")) != -1) {
+@@ -221,46 +244,26 @@
+ 		return EXIT_FAILURE;
+ 	}
+ 
+-	filenames = (char **)malloc(sizeof(char *) * count);
+-	if (filenames == NULL) {
+-		fprintf(stderr, "[!] Failed to allocate filenames's memory.\n");
+-		return EXIT_FAILURE;
+-	}
+-	for (i = 0; i < count; i++) {
+-		filenames[i] = (char *)malloc(sizeof(char) * (FILENAME_MAX+1));
+-		if (filenames[i] == NULL) {
+-			fprintf(stderr, "[!] Failed to allocate filename's memory.\n");
+-			return EXIT_FAILURE;
+-		}
+-		make_filename(filenames[i], FILENAME_MAX+1, i);
+-	}
+-
+ 	if (setup_context(QD, &ring)) {
+ 		return EXIT_FAILURE;
+ 	}
+ 
+ 	clock_gettime(CLOCK_MONOTONIC, &before);
+-	for (i = 0; i < count; i++) {
+-		if (submit_read_random_request(&ring, size_bytes)) {
++	if (submit_read_random_requests(&ring, size_bytes, count)) {
+ 			fprintf(stderr, "[!] Failed to submit read /dev/urandom request.\n");
+ 			return EXIT_FAILURE;
+ 		}
+-		if (get_read_completion(&ring, filenames[i])) {
++	if (get_read_completions(&ring, count)) {
+ 			fprintf(stderr, "[!] Failed to read & submit write.\n");
+ 			return EXIT_FAILURE;
+ 		}
+-		if (finalize_completions(&ring)) {
++	if (finalize_completions(&ring, count)) {
+ 			fprintf(stderr, "[!] Failed to write.\n");
+ 		}
+-	}
+ 	clock_gettime(CLOCK_MONOTONIC, &after);
+ 
+ 	printf("[+] Elapsed %f nsec.\n", (double)diff_nsec(before, after));
+ 
+-	for (i = 0; i < count; i++) {
+-		free(filenames[i]);
+-	}
+-	free(filenames);
+ 	close(infd);
+ 	io_uring_queue_exit(&ring);
+ 

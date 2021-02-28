@@ -1,0 +1,41 @@
+#!/usr/bin/env bpftrace
+/*
+ * uring_iowq - Trace io-wq related executions.
+ *
+ * Usage: sudo ./tools/uring_iowq.bt <program name>
+ */
+
+BEGIN {
+    printf("Tracing %s's workqueue for I/O operations... Hit Ctrl-C to end.\n", str($1));
+}
+
+kprobe:io_wq_create /comm == str($1)/ {
+    printf("io-wq created by %s\n", kstack);
+}
+
+kprobe:io_wq_enqueue /comm == str($1)/ {
+    @enqueue_count = count();
+    @enqueue_stacks[kstack] = count();
+}
+
+kprobe:io_wq_get_task {
+    printf("get io-wq task by %s\n", func);
+}
+
+kprobe:io_wq_get {
+    printf("get into io-wq by %s\n", func);
+}
+
+kprobe:io_wq_submit_work {
+    @submit_work_th[comm] = count();
+    @submit_work_stacks[kstack] = count();
+}
+
+kprobe:io_wq_cancel_cb /comm == str($1)/ {
+    printf("cancel I/O control block\n");
+}
+
+kprobe:io_wq_destroy {
+    printf("destroy io-wq: %s\n", comm);
+}
+

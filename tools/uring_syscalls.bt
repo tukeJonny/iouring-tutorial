@@ -1,0 +1,74 @@
+#!/usr/bin/env bpftrace
+/**
+ * uring_syscalls - Trace io_uring related system calls.
+ * Usage: sudo ./tools/uring_syscalls.bt
+ */
+
+#include <uapi/linux/io_uring.h>
+
+BEGIN {
+    printf("Tracing io_uring system calls... Hit Ctrl-C to end.\n");
+
+    // io_uring_register(2) opcodes
+    // See https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h#L267,L287
+    @register_opcodes[0] = "BUFFERS";
+    @register_opcodes[1] = "UNREGISTER_BUFFERS";
+    @register_opcodes[2] = "REGISTER_FILES";
+    @register_opcodes[3] = "UNREGISTER_FILES";
+    @register_opcodes[4] = "REGISTER_EVENTFD";
+    @register_opcodes[5] = "UNREGISTER_EVENTFD";
+    @register_opcodes[6] = "REGISTER_FILES_UPDATE";
+    @register_opcodes[7] = "REGISTER_EVENTFD_ASYNC";
+    @register_opcodes[8] = "REGISTER_PROBE";
+    @register_opcodes[9] = "REGISTER_PERSONALITY";
+    @register_opcodes[10] = "UNREGISTER_PERSONALITY";
+    @register_opcodes[11] = "REGISTER_RESTRICTIONS";
+    @register_opcodes[12] = "REGISTER_ENABLE_RINGS";
+}
+
+tracepoint:syscalls:sys_enter_io_uring_setup {
+    printf("io_uring_setup(entries=%d)\n", args->entries);
+}
+
+tracepoint:syscalls:sys_enter_io_uring_enter {
+    $fd = args->fd;
+    $to_submit = args->to_submit;
+    $min_complete = args->min_complete;
+    $flags = args->flags;
+
+    printf("io_uring_enter(fd=%d, to_submit=%d, min_complete=%d) called.\n", $fd, $to_submit, $min_complete);
+
+    $opcode = "unkown";
+    if ($flags & (1 << 0)) {
+        printf("\t- GETEVENTS.\n");
+    }
+    if ($flags & (1 << 1)) {
+        printf("\t- SQ_WAKEUP.\n");
+    }
+    if ($flags & (1 << 2)) {
+        printf("\t- SQ_WAIT.\n");
+    }
+    if ($flags & (1 << 3)) {
+        printf("\t- EXT_ARG.\n");
+    }
+}
+
+tracepoint:syscalls:sys_exit_io_uring_enter {
+    @io_uring_enter_exit[args->ret] = count();
+}
+
+tracepoint:syscalls:sys_enter_io_uring_register {
+    $opcode = @register_opcodes[args->opcode];
+    $fd = args->fd;
+
+    printf("%s %d.\n", $opcode, $fd);
+    @io_uring_register_enter[$opcode] = count();
+}
+
+tracepoint:syscalls:sys_exit_io_uring_register {
+    @io_uring_register_exit[args->ret] = count();
+}
+
+END {
+    clear(@register_opcodes)
+}
