@@ -259,6 +259,7 @@ int main(int argc, char *argv[]) {
 	}
 	if (finalize_completions(&ring, count)) {
 		fprintf(stderr, "[!] Failed to write.\n");
+		return EXIT_FAILURE;
 	}
 	clock_gettime(CLOCK_MONOTONIC, &after);
 
