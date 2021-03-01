@@ -28,7 +28,7 @@ static inline long diff_nsec(struct timespec before, struct timespec after) {
 	return ((after.tv_sec * NSECS_PER_SEC + after.tv_nsec) - (before.tv_sec * NSECS_PER_SEC + before.tv_nsec));
 }
 
-char *make_filename(char *buf, size_t buf_size, int index) {
+static char *make_filename(char *buf, size_t buf_size, int index) {
 	size_t filename_len;
 
 	memset(buf, 0, buf_size);
@@ -112,7 +112,7 @@ err:
 	return 1;
 }
 
-int get_read_completion(struct io_uring *ring, const char *path) {
+static int get_read_completion(struct io_uring *ring, const char *path) {
 	struct io_uring_cqe *cqe;
 	struct io_uring_sqe *sqe;
 	struct io_data *data;
@@ -156,7 +156,7 @@ err:
 	return 1;
 }
 
-int finalize_completions(struct io_uring *ring) {
+static int finalize_completions(struct io_uring *ring) {
 	struct io_uring_cqe *cqe;
 	struct io_data *data;
 	int ret;
