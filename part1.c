@@ -15,7 +15,7 @@
 #define RANDOM_FILE_PATH "/dev/urandom"
 
 // fd of /dev/urandom (input file)
-int infd;
+static int infd;
 
 struct io_data {
 	int outfd;
